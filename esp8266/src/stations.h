@@ -5,21 +5,30 @@
 #include <arduino.h>
 #include <NTPClient.h>
 #include "mqttcli.h"
+#include "Settings.h"
 
 #define NUM_STATIONS 4
 
 #define MAX_DURATION 1800L // 30 minutes
 
-#define STATION_1_EN_PIN 14
-#define STATION_2_EN_PIN 12
-#define STATION_3_EN_PIN 13
-#define STATION_4_EN_PIN 15
 
-#define SR_SERIAL_INPUT 3
-#define SR_STORAGE_CLK 2
-#define SR_CLK 4 
-#define SR_OUTPUT_ENABLED 0 
-#define ENABLE_ICS_PIN 5
+
+#define SR_SERIAL_INPUT D1
+#define SR_STORAGE_CLK D2
+#define SR_CLK D3 
+#define SR_OUTPUT_ENABLED D4 
+#define ENABLE_ICS_PIN D6
+
+#define ENABLE_L293_PIN D5 //connect all EN pins together 
+// Bit positions in the 74HCT595 shift register output
+#define STATION1_A 2
+#define STATION1_B 3
+#define STATION2_A 1
+#define STATION2_B 4
+#define STATION4_A 0
+#define STATION4_B 6
+#define STATION3_A 5
+#define STATION3_B 7
 
 namespace sprinkler_controller {
 
@@ -30,7 +39,8 @@ namespace sprinkler_controller {
 struct Station {
   // config
   int id;
-  int enable_pin;
+  int pin_on;
+  int pin_off;
   char cron[40];
   long config_duration; // in seconds
 
@@ -67,7 +77,9 @@ class StationController {
 public:
   StationController() = default;
 
-  void init(NTPClient *time_client);
+  Settings *m_settings;
+
+  void init(NTPClient *time_client, Settings *settings);
   StationEvent next_station_event();
   void process_station_event();
   void check_stop_stations(bool force = false);
@@ -76,14 +88,16 @@ public:
     return m_interface_mode;
   }
   void set_interface_mode(bool mode);
+
+  
 private:
   NTPClient *m_time_client;
   bool m_enabled = true;
   bool m_interface_mode;
-  Station m_stations[NUM_STATIONS] = {{1, STATION_1_EN_PIN, "", 0, false, 0, 0},
-                                      {2, STATION_2_EN_PIN, "", 0, false, 0, 0},
-                                      {3, STATION_3_EN_PIN, "", 0, false, 0, 0},
-                                      {4, STATION_4_EN_PIN, "", 0, false, 0, 0}};
+  Station m_stations[NUM_STATIONS] = {{1, STATION1_A, STATION1_B, "", 0, false, 0, 0},
+                                      {2, STATION2_A, STATION2_B, "", 0, false, 0, 0},
+                                      {3, STATION3_A, STATION3_B, "", 0, false, 0, 0},
+                                      {4, STATION4_A, STATION4_B, "", 0, false, 0, 0}};
   StationEvent m_station_event;
 
   void mqtt_callback(char *topic, byte *payload, uint32_t length);

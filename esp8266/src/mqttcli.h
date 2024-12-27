@@ -6,13 +6,19 @@
 #include <PubSubClient.h>
 #include <ESP8266WiFi.h>
 
-namespace sprinkler_controller::mqttcli {
+namespace sprinkler_controller
+{
+    class StationController; // Forward declaration of StationController
+}
 
-void init(MQTT_CALLBACK_SIGNATURE);
-void loop();
-void publish(const char* topic, const char* payload, bool retained);
-void subscribe(const char* topic);
-void disconnect();
+namespace sprinkler_controller::mqttcli
+{
+
+    void init(MQTT_CALLBACK_SIGNATURE, StationController *station_controller);
+    void loop();
+    void publish(const char *topic, const char *payload, bool retained);
+    void subscribe(const char *topic);
+    void disconnect();
 
 } // namespace sprinkler_controller::mqttcli
 

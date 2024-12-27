@@ -1,6 +1,7 @@
 #include "mqttcli.h"
 #include "log.h"
-#include "constants.h"
+#include "Settings.h"
+#include "stations.h"
 
 #include <PubSubClient.h>
 
@@ -8,11 +9,14 @@ namespace sprinkler_controller::mqttcli {
 
 static WiFiClient espClient;
 static PubSubClient mqtt_client(espClient);
+static StationController* station_controller_ptr = nullptr;  // Static pointer to StationController
 
 static void mqtt_connect();
 
-void init(MQTT_CALLBACK_SIGNATURE)  {
-  mqtt_client.setServer(MQTT_BROKER, 1883);
+void init( MQTT_CALLBACK_SIGNATURE, StationController *station_controller){
+  station_controller_ptr = station_controller;
+
+  mqtt_client.setServer(station_controller_ptr->m_settings->data.mqttServer, 1883);
   mqtt_client.setCallback(callback);
   mqtt_connect();
 }
@@ -47,7 +51,7 @@ static void mqtt_connect() {
     char client_id[20];
     sprintf(client_id, "ESP8266Client-%04ld",random(0xffff));
     // Attempt to connect
-    if (mqtt_client.connect(client_id, MQTT_USER, MQTT_PWD)) {
+    if (mqtt_client.connect(client_id, station_controller_ptr->m_settings->data.mqttUser, station_controller_ptr->m_settings->data.mqttPassword)) {
       debug_printf("connected\n");
     } else {
       debug_printf("failed, rc=%d try again in 5 seconds", mqtt_client.state());

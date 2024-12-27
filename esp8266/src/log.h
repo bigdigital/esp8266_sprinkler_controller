@@ -2,7 +2,7 @@
 #ifndef _LOG_H_
 #define _LOG_H_
 
-// #define DEBUGGING 1 // debug on USB Serial
+ #define DEBUGGING 1 // debug on USB Serial
 
 #include <Arduino.h>
 #include "mqttcli.h"
@@ -32,12 +32,12 @@ inline void report_log(const char* fmt, ...) {
 
 inline void setupSerial() {
     #ifdef DEBUGGING
-    Serial.begin(9600);
+    Serial.begin(115200);
     while (!Serial) {
         ; // wait for serial port to connect. Needed for native USB port only
     }
 
-    Serial.printf("Ready.");
+    debug_printf("Ready.");
     #endif
 }
 
