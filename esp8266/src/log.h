@@ -7,7 +7,7 @@
 #include <Arduino.h>
 #include "mqttcli.h"
 
-inline void debug_printf(const char * fmt, ...) {
+inline void writeLog(const char * fmt, ...) {
 #ifdef DEBUGGING
     va_list args;
     va_start(args, fmt);
@@ -23,7 +23,7 @@ inline void report_log(const char* fmt, ...) {
   
   vsprintf(msg, fmt, args);
   #ifdef DEBUGGING
-  debug_printf(strcat(msg, "\n"));
+  writeLog(strcat(msg, "\n"));
   #endif
   sprinkler_controller::mqttcli::publish("lawn-irrigation/log", msg, true);
   
@@ -37,7 +37,7 @@ inline void setupSerial() {
         ; // wait for serial port to connect. Needed for native USB port only
     }
 
-    debug_printf("Ready.");
+    writeLog("Ready.");
     #endif
 }
 

@@ -53,8 +53,8 @@
 #include "mqttcli.h"
 #include "stations.h"
 #include "log.h"
-#include "Settings.h"
-#include "status_led.h"
+#include "Settings.h" 
+
 
 const int DEEP_SLEEP_THRESHOLD = 3 * 60 * 60; // 3 hours in seconds
 
@@ -68,7 +68,7 @@ WiFiUDP ntpUDP;
 NTPClient time_client(ntpUDP);
 Settings settings;
 bool shouldSaveConfig = false;
-
+Station *station = nullptr;
 void enter_deep_sleep()
 {
   // Find out the next event
@@ -97,10 +97,9 @@ void enter_deep_sleep()
     report_log("[%lld] No next event found!", now);
   }
 
-  report_log("[%lld] Entering deep sleep mode for '%lld' seconds... good night!", now, sleep_duration);
+  report_log("[%lld] Entering deep sleep mode for '%lld' seconds...", now, sleep_duration);
 
-  mqttcli::disconnect();
-
+  mqttcli::disconnect(); 
   ESP.deepSleep(sleep_duration * 1000 * 1000); // convert from seconds to microseconds
 }
 
@@ -109,51 +108,50 @@ void saveConfigCallback()
   shouldSaveConfig = true;
 }
 
-void init_wifi()
+bool init_wifi()
 {
   WiFi.persistent(true); // fix wifi save bug
   WiFi.hostname(settings.data.deviceName);
   AsyncWiFiManager wm(&server, &dns);
   wm.setMinimumSignalQuality(20);
-  bool apRunning = wm.autoConnect("Sprinkler-AP");
   wm.setSaveConfigCallback(saveConfigCallback);
 
   AsyncWiFiManagerParameter custom_mqtt_server("mqtt_server", "MQTT server", NULL, STRING_LENGTH);
   AsyncWiFiManagerParameter custom_mqtt_user("mqtt_user", "MQTT User", NULL, STRING_LENGTH);
   AsyncWiFiManagerParameter custom_mqtt_pass("mqtt_pass", "MQTT Password", NULL, STRING_LENGTH);
-  AsyncWiFiManagerParameter custom_mqtt_topic("mqtt_topic", "MQTT Topic", "Solar01", STRING_LENGTH); 
-  AsyncWiFiManagerParameter custom_device_name("device_name", "Device Name", "Solar2MQTT", STRING_LENGTH);
+  AsyncWiFiManagerParameter custom_device_name("device_name", "Device Name", "Sprinkler", STRING_LENGTH);
 
   wm.addParameter(&custom_mqtt_server);
   wm.addParameter(&custom_mqtt_user);
   wm.addParameter(&custom_mqtt_pass);
-  wm.addParameter(&custom_mqtt_topic); 
   wm.addParameter(&custom_device_name);
+
+  bool apRunning = wm.autoConnect("Sprinkler-AP");
 
   if (shouldSaveConfig)
   {
     strncpy(settings.data.mqttServer, custom_mqtt_server.getValue(), STRING_LENGTH);
     strncpy(settings.data.mqttUser, custom_mqtt_user.getValue(), STRING_LENGTH);
-    strncpy(settings.data.mqttPassword, custom_mqtt_pass.getValue(), STRING_LENGTH); 
+    strncpy(settings.data.mqttPassword, custom_mqtt_pass.getValue(), STRING_LENGTH);
     strncpy(settings.data.deviceName, custom_device_name.getValue(), STRING_LENGTH);
-    strncpy(settings.data.mqttTopic, custom_mqtt_topic.getValue(), STRING_LENGTH); 
     settings.save();
     // ESP.restart();
   }
-
+  return apRunning;
   // debug_printf("WiFi connected. IP address: %s\n", WiFi.localIP().toString().c_str());
 }
 
-
 void setup()
 {
-  setupSerial();
-  led_setup();
+  setupSerial(); 
   settings.load();
   init_wifi();
+  time_client.setTimeOffset(settings.data.ntpOffset);
+  time_client.setPoolServerName(settings.data.ntpServer);
   time_client.begin();
   stctr.init(&time_client, &settings);
 
+  stctr.set_interface_mode(true);
   if (!stctr.is_interface_mode())
   {
     stctr.process_station_event();
@@ -170,48 +168,63 @@ void setup()
     }
 
     // NOTE: if updating FS this would be the place to unmount FS using FS.end()
-    debug_printf("Start updating %s\n", type); });
+    writeLog("Start updating %s\n", type); });
   ArduinoOTA.onEnd([]()
-                   { debug_printf("\nEnd"); });
+                   { writeLog("\nEnd"); });
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total)
-                        { debug_printf("Progress: %u%%\r", (progress / (total / 100))); });
+                        { writeLog("Progress: %u%%\r", (progress / (total / 100))); });
   ArduinoOTA.onError([](ota_error_t error)
                      {
-    debug_printf("Error[%u]: ", error);
+    writeLog("Error[%u]: ", error);
     if (error == OTA_AUTH_ERROR) {
-      debug_printf("Auth Failed");
+      writeLog("Auth Failed");
     } else if (error == OTA_BEGIN_ERROR) {
-      debug_printf("Begin Failed");
+      writeLog("Begin Failed");
     } else if (error == OTA_CONNECT_ERROR) {
-      debug_printf("Connect Failed");
+      writeLog("Connect Failed");
     } else if (error == OTA_RECEIVE_ERROR) {
-      debug_printf("Receive Failed");
+      writeLog("Receive Failed");
     } else if (error == OTA_END_ERROR) {
-      debug_printf("End Failed");
+      writeLog("End Failed");
     }
-    debug_printf("\n"); });
+    writeLog("\n"); });
   ArduinoOTA.begin();
 }
+
+unsigned long lastMillis = 0;
 
 void loop()
 {
   if (!stctr.is_interface_mode())
   {
-    debug_printf("Interface mode switched off.");
+    writeLog("Interface mode switched off.");
     // if we get here, this means that the interface mode was switched off
-    stctr.check_stop_stations(true);
+    stctr.check_stop_stations();
     enter_deep_sleep();
   }
+  else//manually controll todo remove this
+  { 
+    if (millis() - lastMillis >= 10 * 1000UL)
+    {
+      lastMillis = millis();
+      station = stctr.get_station(0);
+      if (station != NULL)
+      {
+        station->start(time_client.getEpochTime(), 5);
+        //stctr.print_state();
+      }
+    }
+    ///
 
-  if (WiFi.status() != WL_CONNECTED)
-  {
-    debug_printf("WiFi disconnected. Reconnecting...");
+    if (WiFi.status() != WL_CONNECTED)
+    {
+      writeLog("WiFi disconnected. Reconnecting...");
 
-    stctr.init(&time_client, &settings);
+      stctr.init(&time_client, &settings);
+    }
+
+    ArduinoOTA.handle();
+
+    stctr.loop(); 
   }
-
-  ArduinoOTA.handle();
-
-  stctr.loop();
-  led_loop();
 }

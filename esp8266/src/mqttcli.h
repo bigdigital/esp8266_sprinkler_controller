@@ -14,7 +14,7 @@ namespace sprinkler_controller
 namespace sprinkler_controller::mqttcli
 {
 
-    void init(MQTT_CALLBACK_SIGNATURE, StationController *station_controller);
+    void init(StationController *station_controller);
     void loop();
     void publish(const char *topic, const char *payload, bool retained);
     void subscribe(const char *topic);

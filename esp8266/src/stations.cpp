@@ -7,16 +7,14 @@
 namespace sprinkler_controller
 {
 
-  static int EEPROM_MARKER = EEPROM_SETTINGS_SIZE + 1;
-
-  static int EEPROM_SIZE = sizeof(EEPROM_MARKER) + sizeof(StationEvent) + (sizeof(Station) * NUM_STATIONS);
-
   static uint64_t lastMillis = 0;
+
+  static time_t now;
 
   // forward decl
   static void enable_ics();
   static void disable_ics();
-  static void set_stations_status(uint8_t status);
+  static void set_stations_status(uint8_t *status, uint8_t bytes_count);
   static void report_status(const Station &station);
   static time_t get_next_station_start(const char *cron, const time_t date);
   static uint8_t get_station_id(const char *topic);
@@ -38,18 +36,39 @@ namespace sprinkler_controller
       this->active_duration = this->config_duration;
     }
 
-    uint8_t mask = 1 << (this->pin_on);
-    set_stations_status(mask);
+    uint8_t arr[STATION_CHANNELS] = {};
+    for (int i = 0; i < STATION_CHANNELS; i++)
+    {
+      uint8_t part = ((this->id - 1) / STATION_CHANNELS);
+      if (part == i)
+      {
+        arr[i] = 1 << (this->pin_on);
+        break;
+      }
+    }
+    set_stations_status(arr, STATION_CHANNELS);
+    report_log("[%lld] Started station %d. Started = %lld, Duration[active] = %ld", now, this->id, this->started, this->active_duration);
   }
 
   void Station::stop()
   {
+    report_log("[%lld] Stopping station %d. Started = %lld, Duration[active] = %ld, Elapsed = %lld", now, this->id, this->started, this->active_duration, now - this->started);
+
     this->started = 0;
     this->is_active = false;
     this->active_duration = 0;
 
-    uint8_t mask = 1 << (this->pin_off);
-    set_stations_status(mask);
+    uint8_t arr[STATION_CHANNELS] = {};
+    for (int i = 0; i < STATION_CHANNELS; i++)
+    {
+      uint8_t part = (this->id - 1) / (STATION_CHANNELS);
+      if (part == i)
+      {
+        arr[i] = 1 << (this->pin_off);
+        break;
+      }
+    }
+    set_stations_status(arr, STATION_CHANNELS);
   }
 
   void Station::to_string(char *s)
@@ -57,14 +76,49 @@ namespace sprinkler_controller
     sprintf(s, "Station[%d] { is_active: %d, started: %lld, duration[active]: %ld, duration[config]: %ld, cron: '%s' }\n", id, is_active, started, active_duration, config_duration, cron);
   }
 
+  void StationController::mqttcallback(char *topic, uint8_t *payload, unsigned int length)
+  {
+    writeLog("MQTT Message arrived [%s]\n", topic);
+
+    char payload_str[length + 1];
+    memcpy(payload_str, payload, length);
+    payload_str[length] = '\0';
+
+    if (starts_with("lawn-irrigation/interface-mode/set", topic))
+    {
+      process_topic_mode_set(payload_str, length); // retained message
+    }
+    else if (starts_with("lawn-irrigation/enabled/set", topic))
+    {
+      process_topic_enabled_set(payload_str, length); // retained message
+    }
+    else if (starts_with("lawn-irrigation/station", topic))
+    {
+      Station *station = get_station_from_topic(topic);
+      if (station != NULL)
+      {
+        if (m_interface_mode && index_of(topic, "set") > 0)
+        {
+          process_topic_station_set(*station, payload_str, length);
+        }
+        else if (m_interface_mode && index_of(topic, "state") > 0)
+        {
+          process_topic_station_state(*station);
+        }
+        else if (index_of(topic, "config") > 0)
+        {
+          process_topic_station_config(*station, payload_str, length); // retained message
+        }
+      }
+    }
+  }
+
   void StationController::init(NTPClient *time_client, Settings *settings)
   {
-    debug_printf("Initializing...\n");
+    writeLog("Initializing...\n");
 
     m_time_client = time_client;
     m_settings = settings;
-
-    EEPROM.begin(EEPROM_SIZE);
 
     digitalWrite(ENABLE_ICS_PIN, LOW);
     pinMode(ENABLE_ICS_PIN, OUTPUT);
@@ -72,51 +126,15 @@ namespace sprinkler_controller
     load();
 
     int retries = 5;
-    while (!m_time_client->forceUpdate() && retries-- > 0);
+    while (!m_time_client->forceUpdate() && retries-- > 0)
+      ;
 
-    mqttcli::init([this](char *topic, byte *payload, uint32_t length)
-                  {
-    debug_printf("MQTT Message arrived [%s]\n", topic);
-
-    char payload_str[length + 1];
-    memcpy(payload_str, payload, length);
-    payload_str[length] = '\0';
-
-    if (starts_with("lawn-irrigation/interface-mode/set", topic))  {
-      process_topic_mode_set(payload_str, length); // retained message
-    } else if (starts_with("lawn-irrigation/enabled/set", topic))  {
-      process_topic_enabled_set(payload_str, length); // retained message
-    } else if (starts_with("lawn-irrigation/station", topic))  {
-      Station *station = get_station_from_topic(topic);
-      if (station != NULL) {
-        if (m_interface_mode && index_of(topic, "set") > 0) {
-          process_topic_station_set(*station, payload_str, length);
-        } else if (m_interface_mode && index_of(topic, "state") > 0) {
-          process_topic_station_state(*station);
-        } else if (index_of(topic, "config") > 0) {
-          process_topic_station_config(*station, payload_str, length); // retained message
-        }
-      }
-    } }, this );
-
-    // subscribe to messages
-    mqttcli::subscribe("lawn-irrigation/+/config");
-    mqttcli::subscribe("lawn-irrigation/+/set");
-
-    // receive and process retained messages
-    int loop_idx = 10;
-    while (loop_idx-- > 0)
-    {
-      mqttcli::loop();
-      delay(100);
-    }
+    mqttcli::init(this);
 
     time_t now = m_time_client->getEpochTime();
     report_log("### Started at: '%lld'. Epoch Time Retries: '%d' ###\n", now, 5 - retries);
 
     print_state();
-
-    debug_printf("MQTT init complete.\n");
   }
 
   void StationController::loop()
@@ -125,7 +143,7 @@ namespace sprinkler_controller
     mqttcli::loop();
 
     // process station events every 30 seconds
-    if (millis() - lastMillis >= 30 * 1000UL)
+    if (millis() - lastMillis >= 1 * 1000UL)
     {
       lastMillis = millis();
 
@@ -143,32 +161,33 @@ namespace sprinkler_controller
     report_interface_mode_state();
   }
 
+  Station *StationController::get_station(uint8_t id)
+  {
+    if (id >= 0 && id < NUM_STATIONS)
+    {
+      return &(m_stations[id]);
+    }
+    return NULL;
+  }
+
   // TOPIC format: lawn-irrigation/station#/set
   Station *StationController::get_station_from_topic(const char *topic)
   {
     uint8_t station_id = get_station_id(topic);
-    if (station_id > 0 && station_id <= NUM_STATIONS)
-    {
-      return &(m_stations[station_id - 1]);
-    }
-
-    return NULL;
+    return get_station(station_id - 1);
   }
 
-  void StationController::check_stop_stations(bool force)
+  void StationController::check_stop_stations()
   {
     for (int i = 0; i < NUM_STATIONS; i++)
     {
       Station &station = this->m_stations[i];
-      time_t now = m_time_client->getEpochTime();
+      now = m_time_client->getEpochTime();
       if (station.is_active == true)
       {
-        if (force || ((now - station.started) > station.active_duration))
+        if (((now - station.started) > station.active_duration))
         {
-          report_log("[%lld] Stopping station %d. Started = %lld, Duration[active] = %ld, Elapsed = %lld, Forced = %d", now, station.id, station.started, station.active_duration, now - station.started, force);
-
           station.stop();
-
           report_status(station);
         }
       }
@@ -209,14 +228,19 @@ namespace sprinkler_controller
       }
     }
 
-    m_station_event = next_event;
-
-    save();
-
-    char msg[100];
-    next_event.to_string(msg);
-    debug_printf("Next Station Event: %s\n", msg);
-
+ 
+    if (next_event.id != m_station_event.id || next_event.type != m_station_event.type)
+    {
+      m_station_event = next_event;
+      save();
+      if (next_event.type == NOOP){
+        writeLog("No next events\n");}
+      else {
+        char msg[100];
+        next_event.to_string(msg);
+        writeLog("Next Station Event: %s\n", msg); 
+      }
+    } 
     return next_event;
   }
 
@@ -245,8 +269,6 @@ namespace sprinkler_controller
       {
         if (m_enabled)
         {
-          check_stop_stations(true); // if we are starting a station, all other stations must be stopped
-
           Station &st = m_stations[m_station_event.id - 1];
 
           report_log("[%lld] Starting station %d. Duration = %ld", now, st.id, m_station_event.duration);
@@ -266,21 +288,20 @@ namespace sprinkler_controller
 
   void StationController::process_topic_enabled_set(const char *payload_str, uint32_t length)
   {
-    debug_printf("Processing topic 'lawn-irrigation/enabled/set'...\n");
+    writeLog("Processing topic 'lawn-irrigation/enabled/set'...\n");
 
     m_enabled = strcmp(payload_str, "on") == 0;
 
-    debug_printf("Topic 'lawn-irrigation/enabled/set' done.\n");
+    writeLog("Topic 'lawn-irrigation/enabled/set' done.\n");
   }
 
   void StationController::process_topic_station_set(Station &station, const char *payload_str, uint32_t length)
   {
-    debug_printf("Processing topic 'lawn-irrigation/station/set'...\n");
+    writeLog("Processing topic 'lawn-irrigation/station/set'...\n");
 
     // get op and duration
     if (starts_with("on", payload_str))
     {
-      check_stop_stations(true); // if we are starting a station, all other stations must be stopped
       char dur[20] = {0};
       substr(payload_str, dur, index_of(payload_str, "|") + 1);
 
@@ -295,35 +316,30 @@ namespace sprinkler_controller
 
     save();
 
-    debug_printf("Topic 'lawn-irrigation/station/set' done.\n");
+    writeLog("Topic 'lawn-irrigation/station/set' done.\n");
   }
 
   void StationController::process_topic_station_state(Station &station)
   {
-    debug_printf("Processing topic 'lawn-irrigation/station/state'...\n");
+    writeLog("Processing topic 'lawn-irrigation/station/state'...\n");
 
     report_status(station);
 
-    debug_printf("Topic 'lawn-irrigation/station/state' done.\n");
+    writeLog("Topic 'lawn-irrigation/station/state' done.\n");
   }
 
   void StationController::process_topic_mode_set(const char *payload_str, uint16_t length)
   {
-    debug_printf("Processing topic 'lawn-irrigation/interface-mode/set'...\n");
+    writeLog("Processing topic 'lawn-irrigation/interface-mode/set'...\n");
 
-    // get mode
-    m_interface_mode = strncmp("on", payload_str, 2) == 0;
+    set_interface_mode(strncmp("on", payload_str, 2) == 0);
 
-    save();
-
-    report_interface_mode_state();
-
-    debug_printf("Topic 'lawn-irrigation/interface-mode/set' done.\n");
+    writeLog("Topic 'lawn-irrigation/interface-mode/set' done.\n");
   }
 
   void StationController::process_topic_station_config(Station &station, const char *payload_str, uint32_t length)
   {
-    debug_printf("Processing topic 'lawn-irrigation/station/config'...\n");
+    writeLog("Processing topic 'lawn-irrigation/station/config'...\n");
 
     // get mode
     int sep_index = index_of(payload_str, "|");
@@ -336,7 +352,7 @@ namespace sprinkler_controller
 
     save();
 
-    debug_printf("Topic 'lawn-irrigation/station/config' done.\n");
+    writeLog("Topic 'lawn-irrigation/station/config' done.\n");
   }
 
   void StationController::report_interface_mode_state()
@@ -346,11 +362,11 @@ namespace sprinkler_controller
 
   void StationController::load()
   {
-    int addr = 0;
+    int addr = m_settings->getSprinklerStart();
 
     if (EEPROM.read(addr) == EEPROM_MARKER)
     {
-      debug_printf("Loading state from EEPROM...");
+      writeLog("Loading state from EEPROM...");
 
       addr += 1;
 
@@ -363,15 +379,17 @@ namespace sprinkler_controller
         addr += sizeof(Station);
       }
 
-      debug_printf("done.\n");
+      writeLog("done.\n");
     }
   }
 
   void StationController::save()
   {
-    debug_printf("Saving state to EEPROM...");
+    writeLog("Saving state to EEPROM...\n");
 
-    int addr = 0;
+    // return;
+
+    int addr = m_settings->getSprinklerStart();
     EEPROM.write(addr, EEPROM_MARKER);
     addr += 1;
 
@@ -386,31 +404,31 @@ namespace sprinkler_controller
 
     EEPROM.commit();
 
-    debug_printf("done.\n");
+    writeLog("done.\n");
   }
 
   void StationController::print_state()
   {
-    debug_printf("\n################################\nSystem is %s\nInterface mode = %s\n\n", m_enabled ? "ENABLED" : "DISABLED", m_interface_mode ? "ON" : "OFF");
+    writeLog("################################\nSystem is %s\nInterface mode = %s\n\n", m_enabled ? "ENABLED" : "DISABLED", m_interface_mode ? "ON" : "OFF");
     char msg[200];
     m_station_event.to_string(msg);
-    debug_printf(msg);
+    writeLog(msg);
     for (int i = 0; i < NUM_STATIONS; i++)
     {
-      char s[200];
-      m_stations[i].to_string(s);
-      debug_printf(s);
+      memset(&msg, 0, sizeof(msg));
+      m_stations[i].to_string(msg);
+      writeLog(msg);
     }
-    debug_printf("################################\n");
+    writeLog("################################\n");
   }
 
   static void set_shift_register(uint8_t value)
   {
-    shiftOut(SR_SERIAL_INPUT, SR_CLK, LSBFIRST, value);
+    shiftOut(SR_SERIAL_INPUT, SR_CLK, MSBFIRST, value);
 
-    digitalWrite(SR_STORAGE_CLK, LOW);
-    digitalWrite(SR_STORAGE_CLK, HIGH);
-    digitalWrite(SR_STORAGE_CLK, LOW);
+    digitalWrite(SR_R_CLK, LOW);
+    digitalWrite(SR_R_CLK, HIGH);
+    digitalWrite(SR_R_CLK, LOW);
   }
 
   static void enable_ics()
@@ -420,19 +438,20 @@ namespace sprinkler_controller
 
     // setup
     // use RX pin as GPIO
-    pinMode(SR_SERIAL_INPUT, FUNCTION_3);
     pinMode(SR_SERIAL_INPUT, OUTPUT);
+    digitalWrite(SR_SERIAL_INPUT, LOW);
 
-    digitalWrite(ENABLE_L293_PIN, LOW);
     pinMode(ENABLE_L293_PIN, OUTPUT);
-    digitalWrite(SR_OUTPUT_ENABLED, HIGH);
+    digitalWrite(ENABLE_L293_PIN, LOW);
+
     pinMode(SR_OUTPUT_ENABLED, OUTPUT);
+    digitalWrite(SR_OUTPUT_ENABLED, HIGH);
 
-    digitalWrite(SR_CLK, LOW);
     pinMode(SR_CLK, OUTPUT);
+    digitalWrite(SR_CLK, LOW);
 
-    digitalWrite(SR_STORAGE_CLK, LOW);
-    pinMode(SR_STORAGE_CLK, OUTPUT);
+    pinMode(SR_R_CLK, OUTPUT);
+    digitalWrite(SR_R_CLK, LOW);
 
     // enable
     digitalWrite(ENABLE_ICS_PIN, HIGH);
@@ -443,28 +462,30 @@ namespace sprinkler_controller
     // disable
     digitalWrite(ENABLE_ICS_PIN, LOW);
 
-    // revert from GPIO to RX
-    pinMode(SR_SERIAL_INPUT, FUNCTION_0);
-    pinMode(SR_SERIAL_INPUT, INPUT);
-
     // float pins
+    pinMode(SR_SERIAL_INPUT, INPUT);
     pinMode(ENABLE_L293_PIN, INPUT);
     pinMode(SR_OUTPUT_ENABLED, INPUT);
     pinMode(SR_CLK, INPUT);
-    pinMode(SR_STORAGE_CLK, INPUT);
-    // pinMode(LED_PIN, INPUT);
+    pinMode(SR_R_CLK, INPUT);
   }
 
-  static void set_stations_status(uint8_t status)
+  static void set_stations_status(uint8_t *status, uint8_t bytes_count)
   {
+    if (bytes_count <= 1)
+      return;
+
     enable_ics();
 
-    set_shift_register(status);
+    for (int i = bytes_count - 1; i == 0; i--)
+    { // send in reverse order
+      set_shift_register(status[i]);
+    }
 
     digitalWrite(SR_OUTPUT_ENABLED, LOW);
     delay(50);
     digitalWrite(ENABLE_L293_PIN, HIGH);
-    delay(1000);
+    delay(500);
     digitalWrite(ENABLE_L293_PIN, LOW);
 
     digitalWrite(SR_OUTPUT_ENABLED, HIGH);
@@ -480,7 +501,7 @@ namespace sprinkler_controller
 
     if (err != NULL)
     {
-      debug_printf("Error while parsing the CRON expr - %s\n", err);
+      writeLog("Error while parsing the CRON expr - %s\n", err);
     }
 
     return cron_next(&ce, date);
