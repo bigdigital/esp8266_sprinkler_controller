@@ -1,0 +1,137 @@
+{{p_header}}
+
+<script>
+    let socket;
+    let reconnectInterval = 1000;  
+    let maxReconnectInterval = 15000;  
+
+    const stationButtons = {};
+   
+    
+    window.addEventListener('load', connectWebSocket);
+
+
+    function connectWebSocket() { 
+        socket = new WebSocket('ws://' + window.location.hostname + '/ws');
+        socket.onopen = function () {
+            console.log('WS connected');
+            reconnectInterval = 1000;
+        };
+        socket.onmessage = function (event) {
+            const data = JSON.parse(event.data);
+
+            if (data.next_event && data.stations) {
+                updateStations(data.stations);
+            }
+        };
+        socket.onerror = function (error) {
+            console.error('WS Error:', error);
+            socket.close(); 
+        };
+        socket.onclose = function () {
+            console.log('WS disconnected');
+            reconnectWebSocket();
+        };
+    };
+
+    function reconnectWebSocket() {
+        if (reconnectInterval < maxReconnectInterval) {
+            reconnectInterval *= 2; 
+        }
+        console.log(`Reconnecting WebSocket in ${reconnectInterval / 1000} seconds...`);
+
+        setTimeout(function () {
+            connectWebSocket();
+        }, reconnectInterval);
+    }
+     
+
+    // Function to create a toggle switch
+    function createToggle(station) {
+        const toggleWrapper = document.createElement('div');
+        toggleWrapper.classList.add('toggle', 'btn');
+        toggleWrapper.setAttribute('data-id', station.id);
+
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = station.is_active === 1;
+        input.style.display = 'none';
+
+        const toggleGroup = document.createElement('div');
+        toggleGroup.classList.add('toggle-group');
+
+        const labelOn = document.createElement('label');
+        labelOn.classList.add('btn', 'toggle-on');
+        labelOn.textContent = 'On';
+
+        const labelOff = document.createElement('label');
+        labelOff.classList.add('btn', 'toggle-off');
+        labelOff.textContent = 'Off';
+
+        const handle = document.createElement('span');
+        handle.classList.add('toggle-handle', 'btn', 'btn-light');
+
+        toggleGroup.appendChild(labelOn);
+        toggleGroup.appendChild(labelOff);
+        toggleGroup.appendChild(handle);
+
+        toggleWrapper.appendChild(input);
+        toggleWrapper.appendChild(toggleGroup);
+ 
+        toggleWrapper.addEventListener('click', () => {
+            const isActive = !input.checked;
+            input.checked = isActive;
+            toggleWrapper.classList.toggle('off', !isActive);
+ 
+            toggleStationState(station.id);
+        });
+
+        return toggleWrapper;
+    }
+
+
+    // Function to toggle the state of a station
+    function toggleStationState(stationId) {
+        // Send the new state back to the server (could be a WebSocket message or HTTP request)
+        const currentState = stationButtons[stationId].isActive ? 0 : 1;
+        const message = {
+            type: "toggle_station",
+            id: stationId,
+            is_active: currentState
+        };
+        socket.send(JSON.stringify(message)); // Send the updated state via WebSocket
+    }
+
+    function updateStations(stations) {
+        const container = document.getElementById('status');
+        container.innerHTML = '';
+
+        stations.forEach(station => {
+            let stationDiv = document.createElement('div');
+            stationDiv.classList.add('station');
+
+            const stationInfo = document.createElement('p');
+            stationInfo.textContent = `Station ID: ${station.id}, Cron: ${station.cron}, Started: ${new Date(station.started).toLocaleString()}`;
+            stationDiv.appendChild(stationInfo);
+
+            var button;
+            if (stationButtons[station.id]) {
+                button = stationButtons[station.id].el;
+            } else {
+                button = createToggle(station);
+                stationButtons[station.id] = { el: button, isActive: station.is_active };
+            }
+            button.classList.toggle('off', station.is_active === 0);
+            stationDiv.appendChild(button);
+            container.appendChild(stationDiv);
+        });
+    }
+</script>
+
+<div>
+    <h2 id="device_name">{{p_device_name}}</h2>
+    <h1>Solenoid Statuses</h1>
+    <div id="status"></div>
+</div>
+
+{{p_footer}}

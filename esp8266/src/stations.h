@@ -5,6 +5,7 @@
 #include <arduino.h>
 #include <NTPClient.h>
 #include "mqttcli.h"
+#include "web_socket.h"
 
 // Forward declaration
 class Settings;
@@ -62,6 +63,7 @@ namespace sprinkler_controller
     void start(time_t start, long dur);
     void stop();
     void to_string(char *buf);
+    int to_json(int offset, char *buf);
   };
 
   enum EventType
@@ -78,7 +80,7 @@ namespace sprinkler_controller
     long duration = 0;
     EventType type = NOOP;
 
-    inline void to_string(char *str)
+    inline int to_string(char *str)
     {
       String t_str;
       switch (type)
@@ -93,7 +95,7 @@ namespace sprinkler_controller
         t_str = "STOP";
         break;
       }
-      sprintf(str, "Station:%d; Event:%s; At:%lld; Duration:%ld;\n", id, t_str.c_str(), time, duration);
+      return sprintf(str, "Station:%d; Event:%s; At:%lld; Duration:%ld;", id, t_str.c_str(), time, duration);
     }
   };
 
@@ -104,13 +106,19 @@ namespace sprinkler_controller
 
     Settings *m_settings;
 
+    bool m_initialized = false;
+
     void init(NTPClient *time_client, Settings *settings);
+    time_t time_now();
     StationEvent next_station_event();
     void process_station_event();
     void check_stop_stations();
-    void loop();
+    void loop(); 
+    void save(); 
+
     constexpr bool is_interface_mode()
     {
+      if (!m_initialized) return true;
       return m_interface_mode;
     }
     void set_interface_mode(bool mode);
@@ -118,8 +126,9 @@ namespace sprinkler_controller
     void mqttcallback(char *topic, uint8_t *payload, unsigned int length);
 
     void print_state();
+    void to_json(char *msg);
     Station *get_station(uint8_t id);
-
+    StationEvent m_station_event;
   private:
     NTPClient *m_time_client;
     bool m_enabled = true;
@@ -133,7 +142,7 @@ namespace sprinkler_controller
                                         {6, STATION2_A, STATION2_B, "", 0, false, 0, 0},
                                         {7, STATION3_A, STATION3_B, "", 0, false, 0, 0},
                                         {8, STATION4_A, STATION4_B, "", 0, false, 0, 0}};
-    StationEvent m_station_event;
+
 
     Station *get_station_from_topic(const char *topic);
     void process_topic_mode_set(const char *payload_str, uint16_t length);
@@ -144,7 +153,6 @@ namespace sprinkler_controller
     void process_topic_enabled_set(const char *payload_str, uint32_t length);
     void report_interface_mode_state();
     void load();
-    void save();
   };
   
 } // namespace sprinkler_controller

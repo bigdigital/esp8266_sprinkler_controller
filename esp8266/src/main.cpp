@@ -41,7 +41,7 @@
  * @copyright Copyright (c) 2022
  *
  */
-
+#define DEBUG_ESP_WIFI
 #include <Arduino.h>
 #include <NTPClient.h>
 #include <WiFiUdp.h>
@@ -51,16 +51,19 @@
 #include <ESPAsyncWiFiManager.h>
 
 #include "mqttcli.h"
+#include "web_socket.h"
 #include "stations.h"
 #include "log.h"
-#include "Settings.h" 
-
+#include "Settings.h"
+#include "html.h"
+#include "templateProcessor.h"
 
 const int DEEP_SLEEP_THRESHOLD = 3 * 60 * 60; // 3 hours in seconds
 
 using namespace sprinkler_controller;
 
 AsyncWebServer server(80);
+
 DNSServer dns;
 
 StationController stctr;
@@ -69,6 +72,12 @@ NTPClient time_client(ntpUDP);
 Settings settings;
 bool shouldSaveConfig = false;
 Station *station = nullptr;
+
+unsigned long lastMillis = 0;
+
+bool serverInitialized = false; 
+bool disconnected = true;
+
 void enter_deep_sleep()
 {
   // Find out the next event
@@ -99,13 +108,39 @@ void enter_deep_sleep()
 
   report_log("[%lld] Entering deep sleep mode for '%lld' seconds...", now, sleep_duration);
 
-  mqttcli::disconnect(); 
+  mqttcli::disconnect();
   ESP.deepSleep(sleep_duration * 1000 * 1000); // convert from seconds to microseconds
 }
 
 void saveConfigCallback()
 {
   shouldSaveConfig = true;
+}
+
+void initializeServer()
+{
+  serverInitialized = true;
+  disconnected = false;
+  writeLog("WiFi connected. IP address: %s\n", WiFi.localIP().toString().c_str()); 
+  writeLog("Wi-Fi Signal Strength: %d dBm\n", WiFi.RSSI());
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
+            {
+              AsyncWebServerResponse *response = request->beginResponse_P(200, "text/html", HTML_MAIN, templateProcessor);
+              request->send(response); });
+  server.onNotFound([](AsyncWebServerRequest *request)
+                    { request->send(404, "text/plain", "404"); });
+
+  sprinkler_controller::web_socket::init(&server, &stctr);
+ 
+  time_client.setTimeOffset(settings.data.ntpOffset);
+  time_client.setPoolServerName(settings.data.ntpServer);
+  time_client.begin();
+
+  writeLog("NTP Server conf: %s, offset %d\n", settings.data.ntpServer, settings.data.ntpOffset);
+
+  stctr.init(&time_client, &settings);
+  stctr.set_interface_mode(true); 
+  server.begin();
 }
 
 bool init_wifi()
@@ -137,26 +172,24 @@ bool init_wifi()
     settings.save();
     // ESP.restart();
   }
+  if (apRunning)
+  {
+    initializeServer();
+  }
+  else
+  {
+    writeLog("Failed to connect to Wi-Fi or start AP. Retrying in loop...");
+  }
+
   return apRunning;
-  // debug_printf("WiFi connected. IP address: %s\n", WiFi.localIP().toString().c_str());
 }
 
 void setup()
 {
-  setupSerial(); 
+  setupSerial();
   settings.load();
-  init_wifi();
-  time_client.setTimeOffset(settings.data.ntpOffset);
-  time_client.setPoolServerName(settings.data.ntpServer);
-  time_client.begin();
-  stctr.init(&time_client, &settings);
 
-  stctr.set_interface_mode(true);
-  if (!stctr.is_interface_mode())
-  {
-    stctr.process_station_event();
-    enter_deep_sleep();
-  }
+  init_wifi(); 
 
   ArduinoOTA.onStart([]()
                      {
@@ -191,40 +224,55 @@ void setup()
   ArduinoOTA.begin();
 }
 
-unsigned long lastMillis = 0;
 
 void loop()
 {
   if (!stctr.is_interface_mode())
   {
-    writeLog("Interface mode switched off.");
+    writeLog("Interface mode switched off\n");
     // if we get here, this means that the interface mode was switched off
     stctr.check_stop_stations();
     enter_deep_sleep();
   }
-  else//manually controll todo remove this
-  { 
-    if (millis() - lastMillis >= 10 * 1000UL)
-    {
-      lastMillis = millis();
-      station = stctr.get_station(0);
-      if (station != NULL)
-      {
-        station->start(time_client.getEpochTime(), 5);
-        //stctr.print_state();
-      }
-    }
+  else // manually controll todo remove this
+  {
+    // if (millis() - lastMillis >= 20 * 1000UL)
+    // {
+    //   lastMillis = millis();
+    //   station = stctr.get_station(0);
+    //   if (station != NULL)
+    //   {
+    //     station->start(time_client.getEpochTime(), 5);
+    //   }
+    // }
     ///
 
     if (WiFi.status() != WL_CONNECTED)
     {
-      writeLog("WiFi disconnected. Reconnecting...");
-
-      stctr.init(&time_client, &settings);
+      if (!disconnected)
+      {
+        writeLog("WiFi disconnected. Reconnecting...\n");
+        disconnected = true;
+        // stctr.init(&time_client, &settings);
+      }
+    }
+    else
+    {
+      if (!serverInitialized)
+      {
+        Serial.println("Wi-Fi connected! Initializing server...");
+        initializeServer();
+      }
+      if (disconnected)
+      {
+        writeLog("WiFi reconnected\n");
+        time_client.forceUpdate();
+        disconnected = false;
+      }
     }
 
     ArduinoOTA.handle();
 
-    stctr.loop(); 
+    stctr.loop();
   }
 }

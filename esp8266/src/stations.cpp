@@ -48,6 +48,8 @@ namespace sprinkler_controller
     }
     set_stations_status(arr, STATION_CHANNELS);
     report_log("[%lld] Started station %d. Started = %lld, Duration[active] = %ld", now, this->id, this->started, this->active_duration);
+
+    report_status(*this);
   }
 
   void Station::stop()
@@ -69,11 +71,23 @@ namespace sprinkler_controller
       }
     }
     set_stations_status(arr, STATION_CHANNELS);
+    report_status(*this);
   }
 
   void Station::to_string(char *s)
   {
     sprintf(s, "Station[%d] { is_active: %d, started: %lld, duration[active]: %ld, duration[config]: %ld, cron: '%s' }\n", id, is_active, started, active_duration, config_duration, cron);
+  }
+
+  int Station::to_json(int offset, char *buf)
+  {
+    offset += sprintf(buf + offset, "{\"id\": %d,", id);
+    offset += sprintf(buf + offset, "\"is_active\": %d,", is_active);
+    offset += sprintf(buf + offset, "\"started\": %lld,", started);
+    offset += sprintf(buf + offset, "\"act_dur\": %ld,", active_duration);
+    offset += sprintf(buf + offset, "\"conf_dur\": %ld,", config_duration);
+    offset += sprintf(buf + offset, "\"cron\": \"%s\"}", cron);
+    return offset;
   }
 
   void StationController::mqttcallback(char *topic, uint8_t *payload, unsigned int length)
@@ -113,9 +127,16 @@ namespace sprinkler_controller
     }
   }
 
+
+  time_t StationController::time_now()
+  { 
+    return m_time_client->getEpochTime(); 
+  }
+
   void StationController::init(NTPClient *time_client, Settings *settings)
   {
-    writeLog("Initializing...\n");
+    if (m_initialized) return;
+    writeLog("StationController Initializing...\n");
 
     m_time_client = time_client;
     m_settings = settings;
@@ -126,22 +147,23 @@ namespace sprinkler_controller
     load();
 
     int retries = 5;
-    while (!m_time_client->forceUpdate() && retries-- > 0)
-      ;
+    while (!m_time_client->forceUpdate() && retries-- > 0);
 
     mqttcli::init(this);
 
-    time_t now = m_time_client->getEpochTime();
-    report_log("### Started at: '%lld'. Epoch Time Retries: '%d' ###\n", now, 5 - retries);
+    time_t now = time_now();
+    report_log("### Started at: '%lld'###\n", now);
 
     print_state();
+    m_initialized = true;
   }
 
   void StationController::loop()
   {
+    if (m_initialized) return;
     m_time_client->update();
     mqttcli::loop();
-
+    web_socket::loop();
     // process station events every 30 seconds
     if (millis() - lastMillis >= 1 * 1000UL)
     {
@@ -163,6 +185,7 @@ namespace sprinkler_controller
 
   Station *StationController::get_station(uint8_t id)
   {
+    if (!m_initialized)  return NULL;
     if (id >= 0 && id < NUM_STATIONS)
     {
       return &(m_stations[id]);
@@ -182,7 +205,7 @@ namespace sprinkler_controller
     for (int i = 0; i < NUM_STATIONS; i++)
     {
       Station &station = this->m_stations[i];
-      now = m_time_client->getEpochTime();
+      now = time_now();
       if (station.is_active == true)
       {
         if (((now - station.started) > station.active_duration))
@@ -216,7 +239,7 @@ namespace sprinkler_controller
       {
         if (strlen(station.cron) > 0)
         {
-          time_t t = get_next_station_start(station.cron, m_time_client->getEpochTime());
+          time_t t = get_next_station_start(station.cron, time_now());
           if (next_event.time == 0 || next_event.time > t)
           {
             next_event.id = station.id;
@@ -228,19 +251,21 @@ namespace sprinkler_controller
       }
     }
 
- 
     if (next_event.id != m_station_event.id || next_event.type != m_station_event.type)
     {
       m_station_event = next_event;
       save();
-      if (next_event.type == NOOP){
-        writeLog("No next events\n");}
-      else {
+      if (next_event.type == NOOP)
+      {
+        writeLog("No next events\n");
+      }
+      else
+      {
         char msg[100];
         next_event.to_string(msg);
-        writeLog("Next Station Event: %s\n", msg); 
+        writeLog("Next Station Event: %s\n", msg);
       }
-    } 
+    }
     return next_event;
   }
 
@@ -253,7 +278,7 @@ namespace sprinkler_controller
 
     if (m_station_event.type == START)
     {
-      time_t now = m_time_client->getEpochTime();
+      time_t now = time_now();
       if (now > m_station_event.time + 30)
       {
         report_log("[%lld] Scheduled START event out-of-sync with the system time...\nScheduled: '%lld' vs Now: '%lld' \nSkipping event!", now, m_station_event.time, now);
@@ -305,13 +330,11 @@ namespace sprinkler_controller
       char dur[20] = {0};
       substr(payload_str, dur, index_of(payload_str, "|") + 1);
 
-      station.start(m_time_client->getEpochTime(), atoi(dur));
-      report_status(station);
+      station.start( time_now(), atoi(dur));
     }
     else if (starts_with("off", payload_str))
     {
       station.stop();
-      report_status(station);
     }
 
     save();
@@ -422,6 +445,27 @@ namespace sprinkler_controller
     writeLog("################################\n");
   }
 
+  void StationController::to_json(char *msg)
+  {
+    int offset = 0;
+
+    offset += sprintf(msg + offset, "{\"next_event\":\"");
+    offset += m_station_event.to_string(msg + offset);
+    offset += sprintf(msg + offset, "\", \"stations\": [");
+
+    for (int i = 0; i < NUM_STATIONS; i++)
+    {
+      if (i > 0)
+      {
+        offset += sprintf(msg + offset, ", "); // Add a comma between stations
+      }
+      offset = m_stations[i].to_json(offset, msg);
+    }
+    offset += sprintf(msg + offset, "]}"); // Close the stations array
+ 
+    msg[offset] = '\0';
+  }
+
   static void set_shift_register(uint8_t value)
   {
     shiftOut(SR_SERIAL_INPUT, SR_CLK, MSBFIRST, value);
@@ -512,6 +556,7 @@ namespace sprinkler_controller
     char buf[64];
     sprintf(buf, "lawn-irrigation/station%d/state", station.id);
     mqttcli::publish(buf, station.is_active ? "on" : "off", false);
+    web_socket::notifyClients();
   }
 
   // assuming that the station ID is a single digit
