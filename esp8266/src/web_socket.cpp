@@ -6,7 +6,7 @@
 #include <PubSubClient.h>
 
 namespace sprinkler_controller::web_socket
-{ 
+{
   static AsyncWebSocket ws("/ws");
   static AsyncWebSocketClient *wsClient;
 
@@ -41,11 +41,11 @@ namespace sprinkler_controller::web_socket
         {
           if (isActive)
           {
-            station->start(station_controller_ptr->time_now(), 0);
+            station_controller_ptr->set_station(*station, START, 0);
           }
           else
           {
-            station->stop();
+            station_controller_ptr->set_station(*station, STOP, 0);
           }
           notifyClients();
         }
@@ -101,8 +101,8 @@ namespace sprinkler_controller::web_socket
   }
 
   void loop()
-  { 
-      ws.cleanupClients(); 
+  {
+    ws.cleanupClients();
   }
 
 } // namespace sprinkler_controller

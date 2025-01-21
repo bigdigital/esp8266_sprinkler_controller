@@ -43,8 +43,7 @@ public:
   {
     memset(&data, 0, sizeof(data));
     EEPROM.begin(EEPROM_TOTAL_SIZE);
-    EEPROM.get(SETTINGS_START, data);
-    EEPROM.end();
+    EEPROM.get(SETTINGS_START, data); 
     bool ret = coVersCheck();
     sanitycheck();
     if (ret)
@@ -57,8 +56,7 @@ public:
   {
     sanitycheck(); 
     EEPROM.put(SETTINGS_START, data);
-    EEPROM.commit();
-    EEPROM.end();
+    EEPROM.commit(); 
     writeLog("Save Settings\n");
   }
 

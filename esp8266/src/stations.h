@@ -41,7 +41,7 @@ class Settings;
 
 namespace sprinkler_controller
 {
-
+    
   /**
    * The Station structure which contains the station configuration as well as the
    * station state
@@ -114,7 +114,6 @@ namespace sprinkler_controller
     void process_station_event();
     void check_stop_stations();
     void loop(); 
-    void save(); 
 
     constexpr bool is_interface_mode()
     {
@@ -129,6 +128,8 @@ namespace sprinkler_controller
     void to_json(char *msg);
     Station *get_station(uint8_t id);
     StationEvent m_station_event;
+    
+    void set_station(Station &station,EventType event, long dur );
   private:
     NTPClient *m_time_client;
     bool m_enabled = true;
@@ -152,7 +153,9 @@ namespace sprinkler_controller
     void process_topic_station_config(Station &station, const char *payload_str, uint32_t length);
     void process_topic_enabled_set(const char *payload_str, uint32_t length);
     void report_interface_mode_state();
-    void load();
+
+    void load(); 
+    void save(); 
   };
   
 } // namespace sprinkler_controller

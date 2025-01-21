@@ -127,15 +127,15 @@ namespace sprinkler_controller
     }
   }
 
-
   time_t StationController::time_now()
-  { 
-    return m_time_client->getEpochTime(); 
+  {
+    return m_time_client->getEpochTime();
   }
 
   void StationController::init(NTPClient *time_client, Settings *settings)
   {
-    if (m_initialized) return;
+    if (m_initialized)
+      return;
     writeLog("StationController Initializing...\n");
 
     m_time_client = time_client;
@@ -147,7 +147,8 @@ namespace sprinkler_controller
     load();
 
     int retries = 5;
-    while (!m_time_client->forceUpdate() && retries-- > 0);
+    while (!m_time_client->forceUpdate() && retries-- > 0)
+      ;
 
     mqttcli::init(this);
 
@@ -160,7 +161,8 @@ namespace sprinkler_controller
 
   void StationController::loop()
   {
-    if (m_initialized) return;
+    if (m_initialized)
+      return;
     m_time_client->update();
     mqttcli::loop();
     web_socket::loop();
@@ -185,7 +187,8 @@ namespace sprinkler_controller
 
   Station *StationController::get_station(uint8_t id)
   {
-    if (!m_initialized)  return NULL;
+    if (!m_initialized)
+      return NULL;
     if (id >= 0 && id < NUM_STATIONS)
     {
       return &(m_stations[id]);
@@ -320,6 +323,23 @@ namespace sprinkler_controller
     writeLog("Topic 'lawn-irrigation/enabled/set' done.\n");
   }
 
+  void StationController::set_station(Station &station, EventType event, long dur)
+  {
+    switch (event)
+    {
+    case NOOP:
+      break;
+    case START:
+      station.start(time_now(), dur);
+      break;
+    case STOP:
+      station.stop();
+      break;
+    }
+    
+    save();
+  }
+
   void StationController::process_topic_station_set(Station &station, const char *payload_str, uint32_t length)
   {
     writeLog("Processing topic 'lawn-irrigation/station/set'...\n");
@@ -329,15 +349,13 @@ namespace sprinkler_controller
     {
       char dur[20] = {0};
       substr(payload_str, dur, index_of(payload_str, "|") + 1);
-
-      station.start( time_now(), atoi(dur));
+ 
+      set_station(station, START, atoi(dur)); 
     }
     else if (starts_with("off", payload_str))
     {
-      station.stop();
-    }
-
-    save();
+      set_station(station, STOP, 0);
+    } 
 
     writeLog("Topic 'lawn-irrigation/station/set' done.\n");
   }
@@ -387,6 +405,8 @@ namespace sprinkler_controller
   {
     int addr = m_settings->getSprinklerStart();
 
+    writeLog(" EEPROM adr %d\n",EEPROM.read(addr));
+
     if (EEPROM.read(addr) == EEPROM_MARKER)
     {
       writeLog("Loading state from EEPROM...");
@@ -404,6 +424,9 @@ namespace sprinkler_controller
 
       writeLog("done.\n");
     }
+    else{
+      writeLog("Wrong marker...\n"); 
+    }
   }
 
   void StationController::save()
@@ -413,6 +436,9 @@ namespace sprinkler_controller
     // return;
 
     int addr = m_settings->getSprinklerStart();
+
+    writeLog(" EEPROM adr %d\n",addr);
+
     EEPROM.write(addr, EEPROM_MARKER);
     addr += 1;
 
@@ -462,7 +488,7 @@ namespace sprinkler_controller
       offset = m_stations[i].to_json(offset, msg);
     }
     offset += sprintf(msg + offset, "]}"); // Close the stations array
- 
+
     msg[offset] = '\0';
   }
 

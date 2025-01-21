@@ -41,7 +41,7 @@
  * @copyright Copyright (c) 2022
  *
  */
-#define DEBUG_ESP_WIFI
+
 #include <Arduino.h>
 #include <NTPClient.h>
 #include <WiFiUdp.h>
@@ -271,7 +271,7 @@ void loop()
       }
     }
 
-    ArduinoOTA.handle();
+   // ArduinoOTA.handle();
 
     stctr.loop();
   }
