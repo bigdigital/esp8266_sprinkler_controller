@@ -190,7 +190,7 @@ void setup()
   settings.load();
 
   init_wifi(); 
-
+/*
   ArduinoOTA.onStart([]()
                      {
     String type;
@@ -222,6 +222,11 @@ void setup()
     }
     writeLog("\n"); });
   ArduinoOTA.begin();
+  */
+
+ #ifdef DEBUG
+   writeLog("DEBUG mode onn");
+ #endif
 }
 
 
@@ -260,7 +265,7 @@ void loop()
     {
       if (!serverInitialized)
       {
-        Serial.println("Wi-Fi connected! Initializing server...");
+        writeLog("Wi-Fi connected! Initializing server..."); 
         initializeServer();
       }
       if (disconnected)
@@ -270,7 +275,7 @@ void loop()
         disconnected = false;
       }
     }
-
+ 
    // ArduinoOTA.handle();
 
     stctr.loop();

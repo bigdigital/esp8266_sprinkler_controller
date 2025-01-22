@@ -8,6 +8,6 @@ String templateProcessor(const String &var)
     if (var == F("p_device_name"))
         return (settings.data.deviceName);
     if (var == F("p_sw_version"))
-        return (SW_VERSION); 
+        return SW_VERSION; 
     return String(); 
 }

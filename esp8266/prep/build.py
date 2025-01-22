@@ -27,11 +27,8 @@ try:
   print("==========================")
   print("Generating webpage")
   print("==========================")
-  print("Preparing html.h file from source")
-  print("  -insert header") 
+  print("Preparing html.h file from source") 
   cpp_output = "#pragma once\n\n#include <Arduino.h>  // PROGMEM\n\n"
-  print("  -insert html")
-
   for x in glob.glob(filePath+"*.html"):
    print("prozessing file:" + Path(x).stem)
    print(Path(x).stem)
@@ -46,8 +43,7 @@ try:
     if env.GetProjectOption("build_type") == "debug":
      cpp_output += html_content 
     else:
-     cpp_output += html_content  #disable compression until fixed that the compressor remove %VARIABLE%
-    # cpp_output += minify_html.minify(html_content, minify_js=True)
+     cpp_output += minify_html.minify(html_content, minify_js=True)
    cpp_output += ")rawliteral\";\n"
 
    f = open ("./src/html.h", "w")

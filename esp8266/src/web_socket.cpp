@@ -46,8 +46,7 @@ namespace sprinkler_controller::web_socket
           else
           {
             station_controller_ptr->set_station(*station, STOP, 0);
-          }
-          notifyClients();
+          } 
         }
       }
     }

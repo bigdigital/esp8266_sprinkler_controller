@@ -404,8 +404,7 @@ namespace sprinkler_controller
   void StationController::load()
   {
     int addr = m_settings->getSprinklerStart();
-
-    writeLog(" EEPROM adr %d\n",EEPROM.read(addr));
+ 
 
     if (EEPROM.read(addr) == EEPROM_MARKER)
     {
@@ -432,12 +431,8 @@ namespace sprinkler_controller
   void StationController::save()
   {
     writeLog("Saving state to EEPROM...\n");
-
-    // return;
-
-    int addr = m_settings->getSprinklerStart();
-
-    writeLog(" EEPROM adr %d\n",addr);
+ 
+    int addr = m_settings->getSprinklerStart(); 
 
     EEPROM.write(addr, EEPROM_MARKER);
     addr += 1;
@@ -542,7 +537,7 @@ namespace sprinkler_controller
 
   static void set_stations_status(uint8_t *status, uint8_t bytes_count)
   {
-    if (bytes_count <= 1)
+    if (bytes_count < 1)
       return;
 
     enable_ics();

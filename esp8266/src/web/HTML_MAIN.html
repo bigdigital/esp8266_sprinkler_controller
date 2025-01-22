@@ -1,17 +1,25 @@
 {{p_header}}
 
+
+<div class="header">
+    <h1>{{p_device_name}}</h1>
+    <p class="lead">Solenoid Statuses</p>
+</div>
+<div id="status"></div>
+
+
 <script>
     let socket;
-    let reconnectInterval = 1000;  
-    let maxReconnectInterval = 15000;  
+    let reconnectInterval = 1000;
+    let maxReconnectInterval = 15000;
 
     const stationButtons = {};
-   
-    
+
+
     window.addEventListener('load', connectWebSocket);
 
 
-    function connectWebSocket() { 
+    function connectWebSocket() {
         socket = new WebSocket('ws://' + window.location.hostname + '/ws');
         socket.onopen = function () {
             console.log('WS connected');
@@ -26,7 +34,7 @@
         };
         socket.onerror = function (error) {
             console.error('WS Error:', error);
-            socket.close(); 
+            socket.close();
         };
         socket.onclose = function () {
             console.log('WS disconnected');
@@ -36,7 +44,7 @@
 
     function reconnectWebSocket() {
         if (reconnectInterval < maxReconnectInterval) {
-            reconnectInterval *= 2; 
+            reconnectInterval *= 2;
         }
         console.log(`Reconnecting WebSocket in ${reconnectInterval / 1000} seconds...`);
 
@@ -44,7 +52,7 @@
             connectWebSocket();
         }, reconnectInterval);
     }
-     
+
 
     // Function to create a toggle switch
     function createToggle(station) {
@@ -55,7 +63,6 @@
         const input = document.createElement('input');
         input.type = 'checkbox';
         input.checked = station.is_active === 1;
-        input.style.display = 'none';
 
         const toggleGroup = document.createElement('div');
         toggleGroup.classList.add('toggle-group');
@@ -77,29 +84,26 @@
 
         toggleWrapper.appendChild(input);
         toggleWrapper.appendChild(toggleGroup);
- 
+
         toggleWrapper.addEventListener('click', () => {
             const isActive = !input.checked;
             input.checked = isActive;
             toggleWrapper.classList.toggle('off', !isActive);
- 
-            toggleStationState(station.id);
+
+            toggleStationState(station.id, isActive);
         });
 
         return toggleWrapper;
     }
-
-
-    // Function to toggle the state of a station
-    function toggleStationState(stationId) {
-        // Send the new state back to the server (could be a WebSocket message or HTTP request)
-        const currentState = stationButtons[stationId].isActive ? 0 : 1;
+ 
+    function toggleStationState(stationId, state) {  
+        const currentState = state ? 1 : 0;
         const message = {
             type: "toggle_station",
             id: stationId,
             is_active: currentState
         };
-        socket.send(JSON.stringify(message)); // Send the updated state via WebSocket
+        socket.send(JSON.stringify(message));  
     }
 
     function updateStations(stations) {
@@ -111,7 +115,14 @@
             stationDiv.classList.add('station');
 
             const stationInfo = document.createElement('p');
-            stationInfo.textContent = `Station ID: ${station.id}, Cron: ${station.cron}, Started: ${new Date(station.started).toLocaleString()}`;
+
+            if (station.is_active){ 
+                stationInfo.textContent = `Station ${station.id}, Cron: ${station.cron}, Started: ${getTimeAgo(station.started)}`;
+            }
+            else{
+                stationInfo.textContent = `Station ${station.id}, Cron: ${station.cron}, Stopped`;
+            }
+
             stationDiv.appendChild(stationInfo);
 
             var button;
@@ -121,17 +132,39 @@
                 button = createToggle(station);
                 stationButtons[station.id] = { el: button, isActive: station.is_active };
             }
+            button.querySelector('input').checked = station.is_active
             button.classList.toggle('off', station.is_active === 0);
             stationDiv.appendChild(button);
             container.appendChild(stationDiv);
         });
     }
+
+    function getTime(unixTimestamp) {
+        return new Date(unixTimestamp * 1000).toLocaleString()
+    }
+
+    function getTimeAgo(unixTimestamp) {
+        const startedTime = unixTimestamp * 1000;
+        const currentTime = Date.now();
+        const timeElapsed = currentTime - startedTime;
+
+        if (timeElapsed < 60000) {
+            // Less than 1 minute
+            return `${Math.floor(timeElapsed / 1000)} seconds ago`;
+        } else if (timeElapsed < 3600000) {
+            // Less than 1 hour
+            return `${Math.floor(timeElapsed / 60000)} minutes ago`;
+        } else if (timeElapsed < 86400000) {
+            // Less than 1 day
+            return `${Math.floor(timeElapsed / 3600000)} hours ago`;
+        } else {
+            // More than 1 day
+            return `${Math.floor(timeElapsed / 86400000)} days ago`;
+        }
+    }
 </script>
 
-<div>
-    <h2 id="device_name">{{p_device_name}}</h2>
-    <h1>Solenoid Statuses</h1>
-    <div id="status"></div>
-</div>
 
 {{p_footer}}
+
+<!-- end -->
